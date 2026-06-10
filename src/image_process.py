@@ -2,9 +2,34 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
+
+def _as_uint8_rgb(img):
+    """Convert an image array to uint8 RGB for OpenCV processing."""
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+    elif img.ndim == 3 and img.shape[2] == 4:
+        img = img[:, :, :3]
+
+    if img.dtype == np.uint8:
+        return img
+    if np.issubdtype(img.dtype, np.floating):
+        scale = 255.0 if np.nanmax(img) <= 1.0 else 1.0
+        img = np.clip(img * scale, 0, 255)
+    elif img.dtype == np.uint16:
+        img = img.astype(np.float32) / 257.0
+    else:
+        img = img.astype(np.float32)
+        img -= np.min(img)
+        max_val = np.max(img)
+        if max_val > 0:
+            img = img / max_val * 255.0
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
 def hist_eq(img):
+    img = _as_uint8_rgb(img)
     # Convert to LAB
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
     # Split the channels
     l, a, b = cv2.split(lab)
     # Apply histogram equalization
@@ -12,8 +37,8 @@ def hist_eq(img):
     l = clahe.apply(l)
     # Merge the channels
     lab = cv2.merge((l, a, b))
-    # Convert back to BGR
-    img = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    # Convert back to RGB
+    img = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
     return img
 
 def calcExG(img, normalize=False, debug=False, thr = 0.1):

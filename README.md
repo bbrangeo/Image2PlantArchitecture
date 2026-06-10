@@ -31,7 +31,9 @@ If you use this code or dataset in your research, please cite:
 ├── CowpeaSimulator/      # C++ plant simulation code and Helios integration
 ├── models/               # PyTorch model definitions (Dinov2 + GPT-2)
 ├── src/                  # Python source code for training and evaluation
-│   ├── train.py          # Main training script
+│   ├── train.py          # Main training script (local dataset)
+│   ├── train_2.py        # Training from Hugging Face WebDataset
+│   ├── cowpea_wds_dataset.py  # WebDataset adapter for Cowpea-Architecture-XML
 │   ├── plant_dataset.py  # Data loading and augmentation
 │   ├── plant_tokenizer.py# XML to token conversion logic
 │   └── test.ipynb        # Inference and visualization notebook
@@ -70,6 +72,20 @@ python src/train.py \
     --batch_size 4 \
     --epoch 4
 ```
+
+### Training from Hugging Face WebDataset
+To train directly from the [Cowpea-Architecture-XML](https://huggingface.co/datasets/heesup/Cowpea-Architecture-XML) WebDataset shards:
+```bash
+python src/train_2.py \
+    --dataset_url "https://huggingface.co/datasets/heesup/Cowpea-Architecture-XML-WDS/resolve/main/shard-{000000..000200}.tar" \
+    --encoder_checkpoint facebook/dinov2-small \
+    --decoder_checkpoint gpt2-medium \
+    --image_size 448 \
+    --batch_size 4 \
+    --epoch 4
+```
+
+Shard splits default to `0-160` (train), `161-180` (val), and `181-200` (test). Override with `--train_shards`, `--val_shards`, and `--test_shards`.
 
 ### Inference
 You can perform inference using the `PlantArchitectureModel` class. The following example demonstrates how to generate plant tokens from an image and convert them into a structured XML representation.

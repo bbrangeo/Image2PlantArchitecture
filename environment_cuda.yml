@@ -22,3 +22,5 @@ dependencies:
   - sacrebleu
   - rouge-score
   - accelerate
+  - pip:
+    - webdataset

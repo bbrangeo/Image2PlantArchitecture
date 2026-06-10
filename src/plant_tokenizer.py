@@ -3,11 +3,12 @@ import math
 import random
 import os, sys
 # Path Settings
-project_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),"../")
-sys.path.append(project_dir)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
 
-from src.plant_architecture_utils import euler_to_quaternion, quaternion_to_euler
-from src.plant_architecture_utils import coordinates_to_angle, angle_to_coordinates
+from plant_architecture_utils import euler_to_quaternion, quaternion_to_euler
+from plant_architecture_utils import coordinates_to_angle, angle_to_coordinates
 from scipy.spatial.distance import cdist
 
 from sklearn.cluster import MiniBatchKMeans, KMeans
@@ -102,6 +103,15 @@ def vec2token(vec: List[np.ndarray]) -> np.ndarray:
     return np.array(tokens)
 
 
+def _finalize_vec_line(vec_line: Union[List, None]) -> Union[List, None]:
+    if not vec_line:
+        return None
+    min_length = 2 + 5
+    if len(vec_line) < min_length:
+        vec_line.extend([0.0] * (min_length - len(vec_line)))
+    return vec_line
+
+
 def token2vec(tokens: np.ndarray) -> List[np.ndarray]:
     vec = []
     vec_line = None
@@ -117,19 +127,18 @@ def token2vec(tokens: np.ndarray) -> List[np.ndarray]:
             if token < NUM_PA_TOKEN:
                 depth = token // 6
                 organ = token % 6
-                if vec_line:
-                    min_length = 2 + 5
-                    if len(vec_line) < min_length:
-                        vec_line.extend([0.0] * (min_length - len(vec_line)))
-                    vec.append(vec_line)
-                vec_line = [depth,organ]
+                finalized = _finalize_vec_line(vec_line)
+                if finalized is not None:
+                    vec.append(finalized)
+                vec_line = [depth, organ]
             elif vec_line:
                 value = predetermined_centers[token - NUM_PA_TOKEN][0]
                 vec_line.append(value)
             else:
                 print("Depth & Organ is not defined")
-    # Add last params (unclosed)
-    vec.append(vec_line)
+    finalized = _finalize_vec_line(vec_line)
+    if finalized is not None:
+        vec.append(finalized)
 
     return vec
 
