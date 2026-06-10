@@ -20,7 +20,15 @@ from image_process import process_leaf_image
 from linked_xml_to_recursive_xml import recursive_to_linked, pretty_print_xml
 from models.model import PlantArchitectureModel
 from plant_dataset import load_sideview_images
-from plant_tokenizer import EOS_TOKEN, META_TOKEN, PAD_TOKEN, SOS_TOKEN, token2vec, vec2token
+from plant_tokenizer import (
+    EOS_TOKEN,
+    META_TOKEN,
+    NUM_PA_TOKEN,
+    PAD_TOKEN,
+    SOS_TOKEN,
+    token2vec,
+    vec2token,
+)
 from string_to_xml_to_vec import vec2xml
 
 DEFAULT_CHECKPOINT = "heesup/dinov2-small_448_Sideview_gpt2-medium"
@@ -98,6 +106,12 @@ def parse_args():
         default=1.1,
         help="Repetition penalty for generation (default: 1.1)",
     )
+    parser.add_argument(
+        "--num-beams",
+        type=int,
+        default=5,
+        help="Beam search width (default: 5, same as calc_metric)",
+    )
     return parser.parse_args()
 
 
@@ -174,26 +188,47 @@ def build_plant_info_tokens(plant_info):
     return plant_info_token
 
 
-def strip_generation_prefix(tokens, plant_info_tokens):
-    """Remove SOS and/or plant metadata prefix from generated tokens."""
+def strip_generation_prefix(tokens, plant_info_len: int = 5) -> np.ndarray:
+    """Drop SOS + plant metadata prefix (6 tokens), matching calc_metric.py."""
     tokens = np.asarray(tokens, dtype=np.int64)
-    plant_info_tokens = np.asarray(plant_info_tokens, dtype=np.int64)
-    info_len = len(plant_info_tokens)
-    if info_len == 0:
-        return tokens
+    prefix_len = 1 + plant_info_len  # SOS + [META, params..., META]
+    if len(tokens) > prefix_len:
+        return tokens[prefix_len:]
+    if len(tokens) > plant_info_len and tokens[0] != SOS_TOKEN:
+        return tokens[plant_info_len:]
+    return np.array([], dtype=np.int64)
 
-    if len(tokens) >= info_len and np.array_equal(tokens[:info_len], plant_info_tokens):
-        return tokens[info_len:]
 
-    if (
-        len(tokens) > info_len
-        and tokens[0] == SOS_TOKEN
-        and np.array_equal(tokens[1 : info_len + 1], plant_info_tokens)
-    ):
-        return tokens[info_len + 1 :]
+def _generation_kwargs(args, plant_info_tensor):
+    return dict(
+        decoder_start_token_id=SOS_TOKEN,
+        decoder_input_ids=plant_info_tensor,
+        eos_token_id=EOS_TOKEN,
+        pad_token_id=PAD_TOKEN,
+        max_length=args.max_length,
+        repetition_penalty=args.repetition_penalty,
+        use_cache=True,
+        do_sample=False,
+        num_beams=args.num_beams,
+        early_stopping=True,
+    )
 
-    start = 1 if len(tokens) > 0 and tokens[0] == SOS_TOKEN else 0
-    return tokens[start + info_len :]
+
+def _format_inference_failure(raw_tokens, arch_tokens, checkpoint):
+    n_structure = int(np.sum(arch_tokens < NUM_PA_TOKEN)) if len(arch_tokens) else 0
+    preview = arch_tokens[:20].tolist() if len(arch_tokens) else []
+    return (
+        "Model output could not be converted to a plant architecture.\n"
+        f"  checkpoint: {checkpoint}\n"
+        f"  architecture tokens after prefix strip: {len(arch_tokens)} "
+        f"(structure tokens < {NUM_PA_TOKEN}: {n_structure})\n"
+        f"  first tokens: {preview}\n"
+        "Hints:\n"
+        "  - Smoke-test checkpoints (e.g. checkpoint-24) are too early; use "
+        "heesup/dinov2-small_448_Sideview_gpt2-medium or a fully trained .../results\n"
+        "  - Sideview checkpoints need --image with 2x2 layout (auto) or --images-dir\n"
+        "  - 'Depth & Organ is not defined' means param tokens without structure tokens"
+    )
 
 
 def preprocess_image(image, image_processor):
@@ -226,41 +261,20 @@ def main():
         torch.tensor(plant_info_tokens, dtype=torch.long).unsqueeze(0).to(device)
     )
 
-    print("Generating plant architecture...")
+    gen_kwargs = _generation_kwargs(args, plant_info_tensor)
+    print(f"Generating plant architecture (num_beams={args.num_beams})...")
     with torch.no_grad():
         if device.startswith("cuda"):
             with torch.amp.autocast("cuda"):
-                result = model.generate(
-                    pixel_values,
-                    decoder_start_token_id=SOS_TOKEN,
-                    decoder_input_ids=plant_info_tensor,
-                    eos_token_id=EOS_TOKEN,
-                    pad_token_id=PAD_TOKEN,
-                    max_length=args.max_length,
-                    repetition_penalty=args.repetition_penalty,
-                    use_cache=True,
-                )
+                result = model.generate(pixel_values, **gen_kwargs)
         else:
-            result = model.generate(
-                pixel_values,
-                decoder_start_token_id=SOS_TOKEN,
-                decoder_input_ids=plant_info_tensor,
-                eos_token_id=EOS_TOKEN,
-                pad_token_id=PAD_TOKEN,
-                max_length=args.max_length,
-                repetition_penalty=args.repetition_penalty,
-                use_cache=True,
-            )
+            result = model.generate(pixel_values, **gen_kwargs)
 
-    result_tokens = strip_generation_prefix(
-        result.squeeze().cpu().numpy(), plant_info_tokens
-    )
+    raw_tokens = result.squeeze().cpu().numpy()
+    result_tokens = strip_generation_prefix(raw_tokens, plant_info_len=len(plant_info_tokens))
     plant_vec = [line for line in token2vec(result_tokens) if line is not None]
     if not plant_vec:
-        raise ValueError(
-            "Model output could not be converted to a plant architecture. "
-            "The generated token sequence is empty or missing structure tokens."
-        )
+        raise ValueError(_format_inference_failure(raw_tokens, result_tokens, args.checkpoint))
 
     plant_xml = vec2xml(plant_vec)
     plant_xml = recursive_to_linked(plant_xml)

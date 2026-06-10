@@ -138,6 +138,7 @@ huggingface-cli download heesup/Cowpea-Architecture-XML-WDS \
 | `torch.load` / CVE-2025-32434 on resume | Requires `torch>=2.6`; or delete `optimizer.pt` / `scheduler.pt` in the checkpoint folder. |
 | `EncoderDecoderCache` error at eval | Update to latest `main` (`PlantArchitectureTrainer` fix). |
 | WebDataset `curl` exit 56 | Default `--wds_cache_dir data/cowpea_wds` caches shards before training. Or pre-download manually (see above). |
+| Inference: `Depth & Organ is not defined` / empty XML | Checkpoint too early (smoke test) or wrong image layout. Use `heesup/dinov2-small_448_Sideview_gpt2-medium` or a trained `.../results` checkpoint. |
 
 ### Inference
 
@@ -160,12 +161,12 @@ python src/inference.py \
     --output generated_plant.xml
 ```
 
-**Local checkpoint** (e.g. after training with `train_2.py`):
+**Local checkpoint** (use `.../results` after full training, not early `checkpoint-N`):
 
 ```bash
 python src/inference.py \
     --checkpoint log/20250430_TrainValTestByShard/dinov2-small_448_WDS_gpt2-medium/results \
-    --image path/to/plant.jpeg \
+    --image cowpea.jpeg \
     --output generated_plant.xml
 ```
 
@@ -179,7 +180,7 @@ python src/inference.py \
     --output generated_plant.xml
 ```
 
-Optional flags: `--image-size 448`, `--device cuda`, `--leaf-area`, `--plant-width`, `--plant-height`, `--max-length`, `--repetition-penalty`.
+Optional flags: `--image-size 448`, `--device cuda`, `--num-beams 5`, `--leaf-area`, `--plant-width`, `--plant-height`, `--max-length`, `--repetition-penalty`.
 
 #### Python API
 
