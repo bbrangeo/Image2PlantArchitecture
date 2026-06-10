@@ -5,15 +5,19 @@ import sys
 # Required before torch import if --use_mps is passed (DINOv2 bicubic on MPS).
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
-import numpy as np
-import torch
-from sklearn.metrics import accuracy_score, f1_score
-from transformers import AutoConfig, AutoImageProcessor, GPT2Config, Trainer, TrainingArguments
-
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_dir = os.path.join(script_dir, "..")
 sys.path.insert(0, project_dir)
 sys.path.insert(0, script_dir)
+
+import numpy as np
+import torch
+from check_torch_stack import ensure_torchvision_compatible
+
+ensure_torchvision_compatible()
+
+from sklearn.metrics import accuracy_score, f1_score
+from transformers import AutoConfig, AutoImageProcessor, GPT2Config, Trainer, TrainingArguments
 
 from cowpea_wds_dataset import (
     SHARD_RANGE_PATTERN,
@@ -378,6 +382,7 @@ if __name__ == "__main__":
         dataloader_num_workers=args.num_workers,
         fp16=use_fp16,
         use_cpu=device.type == "cpu",
+        save_safetensors=True,
     )
 
     trainer = Trainer(

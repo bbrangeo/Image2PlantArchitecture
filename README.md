@@ -55,8 +55,52 @@ The simulator is required for re-rendering generated XML files into 3D models:
 ```bash
 cd CowpeaSimulator
 mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
+cmake -DCMAKE_BUILD_TYPE=Release -DSKIP_INSTALL_ALL=ON .. -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 make -j$(nproc)
+```
+
+### Troubleshooting
+
+**`operator torchvision::nms does not exist` / `Could not import AutoImageProcessor`**
+
+`torch` and `torchvision` must be installed as a matched pair. This often happens when `torch` was upgraded via **pip** but `torchvision` is still an old **conda/micromamba** build.
+
+Check versions:
+
+```bash
+micromamba activate .env
+python -c "import torch; print('torch', torch.__version__)"
+python -c "import torchvision; print('torchvision', torchvision.__version__)"  # may fail
+```
+
+**If `torch` is pip-installed** (e.g. `2.8.0+cu128`), install matching domain libs with **pip** — not micromamba:
+
+```bash
+# example for torch 2.8.0+cu128 → torchvision 0.23.0
+micromamba remove torchvision torchaudio  # drop stale conda builds if present
+pip install torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+python -c "import torch, torchvision; print(torch.__version__, torchvision.__version__)"
+```
+
+See [pytorch.org previous versions](https://pytorch.org/get-started/previous-versions/) for other CUDA tags (`cu126`, `cu121`, `cpu`, …).
+
+**Fresh conda-only install** (no pip torch):
+
+```bash
+micromamba env create -f environment_cuda.yml -p .env
+```
+
+**Checkpoint resume fails with `torch.load` / CVE-2025-32434**
+
+Recent `transformers` requires `torch>=2.6` to load optimizer state. Upgrade the stack above, or delete `optimizer.pt` / `scheduler.pt` in the checkpoint folder and reload model weights only.
+
+**WebDataset `curl` exit 56 during training**
+
+Pre-download shards locally and point `--dataset_url` at local files instead of streaming from Hugging Face:
+
+```bash
+huggingface-cli download heesup/Cowpea-Architecture-XML-WDS --repo-type dataset --local-dir ./data/cowpea_wds
+# then: --dataset_url "./data/cowpea_wds/shard-{000000..000200}.tar"
 ```
 
 ## Usage
