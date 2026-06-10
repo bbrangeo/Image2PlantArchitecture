@@ -43,15 +43,24 @@ If you use this code or dataset in your research, please cite:
 
 ## Installation
 
-### 1. Python Environment
-Create and activate the conda environment (Python 3.10, torch via pip):
+### 1. Python Environment (GPU / Linux)
+
+Tested on the **tatanka** GPU node (CUDA 12.8, Python 3.10).
+
 ```bash
 micromamba env create -f environment_cuda.yml -n .env
 micromamba activate .env
-python -c "import torch, torchvision; print(torch.__version__, torchvision.__version__, torch.cuda.is_available())"
+
+# CUDA 12.8 hosts: reinstall the matched torch stack (avoids torchvision mismatch)
+pip install --force-reinstall torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
+  --index-url https://download.pytorch.org/whl/cu128
+
+# sanity check
+python -c "import torch, torchvision; from open_clip.model import TextTransformer; \
+print(torch.__version__, torchvision.__version__, torch.cuda.is_available())"
 ```
 
-On hosts that need a specific CUDA wheel (e.g. `cu128`), reinstall torch after create — see comments in `environment_cuda.yml`.
+`environment_cuda.yml` installs torch via **pip only** (not conda) to avoid solver conflicts and mixed pip/conda builds. For other CUDA tags (`cu126`, `cu121`, `cpu`), see [pytorch.org previous versions](https://pytorch.org/get-started/previous-versions/).
 
 ### 2. Build the Helios Simulator
 The simulator is required for re-rendering generated XML files into 3D models:
@@ -60,51 +69,6 @@ cd CowpeaSimulator
 mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release -DSKIP_INSTALL_ALL=ON .. -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 make -j$(nproc)
-```
-
-### Troubleshooting
-
-**`operator torchvision::nms does not exist` / `Could not import AutoImageProcessor`**
-
-`torch` and `torchvision` must be installed as a matched pair. This often happens when `torch` was upgraded via **pip** but `torchvision` is still an old **conda/micromamba** build.
-
-Check versions:
-
-```bash
-micromamba activate .env
-python -c "import torch; print('torch', torch.__version__)"
-python -c "import torchvision; print('torchvision', torchvision.__version__)"  # may fail
-```
-
-**If `torch` is pip-installed** (e.g. `2.8.0+cu128`), install matching domain libs with **pip** — not micromamba:
-
-```bash
-# example for torch 2.8.0+cu128 → torchvision 0.23.0
-micromamba remove torchvision torchaudio  # drop stale conda builds if present
-pip install torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
-python -c "import torch, torchvision; print(torch.__version__, torchvision.__version__)"
-```
-
-See [pytorch.org previous versions](https://pytorch.org/get-started/previous-versions/) for other CUDA tags (`cu126`, `cu121`, `cpu`, …).
-
-**Recreate the environment**:
-
-```bash
-micromamba env remove -n .env -y
-micromamba env create -f environment_cuda.yml -n .env
-```
-
-**Checkpoint resume fails with `torch.load` / CVE-2025-32434**
-
-Recent `transformers` requires `torch>=2.6` to load optimizer state. Upgrade the stack above, or delete `optimizer.pt` / `scheduler.pt` in the checkpoint folder and reload model weights only.
-
-**WebDataset `curl` exit 56 during training**
-
-Pre-download shards locally and point `--dataset_url` at local files instead of streaming from Hugging Face:
-
-```bash
-huggingface-cli download heesup/Cowpea-Architecture-XML-WDS --repo-type dataset --local-dir ./data/cowpea_wds
-# then: --dataset_url "./data/cowpea_wds/shard-{000000..000200}.tar"
 ```
 
 ## Usage
@@ -122,7 +86,25 @@ python src/train.py \
 ```
 
 ### Training from Hugging Face WebDataset
-To train directly from the [Cowpea-Architecture-XML](https://huggingface.co/datasets/heesup/Cowpea-Architecture-XML) WebDataset shards:
+
+Train from the [Cowpea-Architecture-XML-WDS](https://huggingface.co/datasets/heesup/Cowpea-Architecture-XML-WDS) shards with `src/train_2.py`.
+
+**Smoke test** (1 shard, 20 test samples, 1 epoch — validated on tatanka):
+
+```bash
+python src/train_2.py \
+    --dataset_url "https://huggingface.co/datasets/heesup/Cowpea-Architecture-XML-WDS/resolve/main/shard-{000000..000200}.tar" \
+    --train_shards 0-0 --val_shards 0-0 --test_shards 0-0 \
+    --encoder_checkpoint facebook/dinov2-small \
+    --decoder_checkpoint gpt2-medium \
+    --image_size 448 \
+    --batch_size 2 \
+    --epoch 1 \
+    --debug True
+```
+
+**Full training** (default shard splits: `0-160` train, `161-180` val, `181-200` test):
+
 ```bash
 python src/train_2.py \
     --dataset_url "https://huggingface.co/datasets/heesup/Cowpea-Architecture-XML-WDS/resolve/main/shard-{000000..000200}.tar" \
@@ -133,7 +115,26 @@ python src/train_2.py \
     --epoch 4
 ```
 
-Shard splits default to `0-160` (train), `161-180` (val), and `181-200` (test). Override with `--train_shards`, `--val_shards`, and `--test_shards`.
+Checkpoints are saved under `log/<date>/<exp_name>/checkpoints/`. Training resumes automatically if that folder already exists. Override shard splits with `--train_shards`, `--val_shards`, and `--test_shards`.
+
+For long runs on clusters, **pre-download shards locally** instead of streaming over HTTP (avoids `curl` exit 56):
+
+```bash
+huggingface-cli download heesup/Cowpea-Architecture-XML-WDS \
+  --repo-type dataset --local-dir ./data/cowpea_wds
+# then: --dataset_url "./data/cowpea_wds/shard-{000000..000200}.tar"
+```
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `operator torchvision::nms does not exist` | Reinstall matched torch/torchvision/torchaudio via pip (see Installation §1). Never mix pip `torch` with conda `torchvision`. |
+| `No module named 'open_clip'` | `pip install open-clip-torch==2.24.0` |
+| `torch.torch_version` missing / broken import | Env corrupted — recreate with `environment_cuda.yml` and reinstall the cu128 stack. |
+| `torch.load` / CVE-2025-32434 on resume | Requires `torch>=2.6`; or delete `optimizer.pt` / `scheduler.pt` in the checkpoint folder. |
+| `EncoderDecoderCache` error at eval | Update to latest `main` (`PlantArchitectureTrainer` fix). |
+| WebDataset `curl` exit 56 | Pre-download shards locally (see above). |
 
 ### Inference
 You can perform inference using the `PlantArchitectureModel` class. The following example demonstrates how to generate plant tokens from an image and convert them into a structured XML representation.
