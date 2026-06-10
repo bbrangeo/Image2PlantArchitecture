@@ -1,4 +1,5 @@
 import argparse
+import inspect
 import os
 import sys
 
@@ -357,7 +358,7 @@ if __name__ == "__main__":
         f"steps/epoch: {steps_per_epoch}, max_steps: {max_steps}"
     )
 
-    training_args = TrainingArguments(
+    training_kwargs = dict(
         output_dir=f"{output_base_dir}/checkpoints",
         num_train_epochs=num_train_epochs,
         max_steps=max_steps,
@@ -382,8 +383,10 @@ if __name__ == "__main__":
         dataloader_num_workers=args.num_workers,
         fp16=use_fp16,
         use_cpu=device.type == "cpu",
-        save_safetensors=True,
     )
+    if "save_safetensors" in inspect.signature(TrainingArguments.__init__).parameters:
+        training_kwargs["save_safetensors"] = True
+    training_args = TrainingArguments(**training_kwargs)
 
     trainer = Trainer(
         model=model,
