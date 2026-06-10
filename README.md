@@ -33,6 +33,7 @@ If you use this code or dataset in your research, please cite:
 ├── src/                  # Python source code for training and evaluation
 │   ├── train.py          # Main training script (local dataset)
 │   ├── train_2.py        # Training from Hugging Face WebDataset
+│   ├── inference.py      # CLI inference (image → XML)
 │   ├── cowpea_wds_dataset.py  # WebDataset adapter for Cowpea-Architecture-XML
 │   ├── plant_dataset.py  # Data loading and augmentation
 │   ├── plant_tokenizer.py# XML to token conversion logic
@@ -117,7 +118,9 @@ python src/train_2.py \
 
 Checkpoints are saved under `log/<date>/<exp_name>/checkpoints/`. Training resumes automatically if that folder already exists. Override shard splits with `--train_shards`, `--val_shards`, and `--test_shards`.
 
-For long runs on clusters, **pre-download shards locally** instead of streaming over HTTP (avoids `curl` exit 56):
+Remote shards are **cached locally by default** under `data/cowpea_wds/` (via `huggingface_hub`) to avoid `curl` exit 56 during training. Disable with `--stream_wds True` or set `--wds_cache_dir ""`.
+
+For a full dataset copy up front:
 
 ```bash
 huggingface-cli download heesup/Cowpea-Architecture-XML-WDS \
@@ -134,10 +137,53 @@ huggingface-cli download heesup/Cowpea-Architecture-XML-WDS \
 | `torch.torch_version` missing / broken import | Env corrupted — recreate with `environment_cuda.yml` and reinstall the cu128 stack. |
 | `torch.load` / CVE-2025-32434 on resume | Requires `torch>=2.6`; or delete `optimizer.pt` / `scheduler.pt` in the checkpoint folder. |
 | `EncoderDecoderCache` error at eval | Update to latest `main` (`PlantArchitectureTrainer` fix). |
-| WebDataset `curl` exit 56 | Pre-download shards locally (see above). |
+| WebDataset `curl` exit 56 | Default `--wds_cache_dir data/cowpea_wds` caches shards before training. Or pre-download manually (see above). |
 
 ### Inference
-You can perform inference using the `PlantArchitectureModel` class. The following example demonstrates how to generate plant tokens from an image and convert them into a structured XML representation.
+
+Use `src/inference.py` to generate plant architecture XML from an image.
+
+**Single image** (default Hugging Face checkpoint):
+
+```bash
+python src/inference.py \
+    --image path/to/plant.jpeg \
+    --output generated_plant.xml
+```
+
+**Sideview model** (2×2 grid from one image — auto-detected when checkpoint name contains `Sideview`):
+
+```bash
+python src/inference.py \
+    --checkpoint heesup/dinov2-small_448_Sideview_gpt2-medium \
+    --image path/to/plant.jpeg \
+    --output generated_plant.xml
+```
+
+**Local checkpoint** (e.g. after training with `train_2.py`):
+
+```bash
+python src/inference.py \
+    --checkpoint log/20250430_TrainValTestByShard/dinov2-small_448_WDS_gpt2-medium/results \
+    --image path/to/plant.jpeg \
+    --output generated_plant.xml
+```
+
+**Multi-view side-view** (four images in a directory, stem without extension):
+
+```bash
+python src/inference.py \
+    --checkpoint heesup/dinov2-small_448_Sideview_gpt2-medium \
+    --images-dir /path/to/sideview_images \
+    --image-stem plot_0_00 \
+    --output generated_plant.xml
+```
+
+Optional flags: `--image-size 448`, `--device cuda`, `--leaf-area`, `--plant-width`, `--plant-height`, `--max-length`, `--repetition-penalty`.
+
+#### Python API
+
+You can also call `PlantArchitectureModel` directly:
 
 ```python
 import torch

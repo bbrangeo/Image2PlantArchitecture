@@ -1,8 +1,9 @@
 import os
 import re
 import sys
+import urllib.request
 import xml.etree.ElementTree as ET
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -20,6 +21,104 @@ from plant_tokenizer import EOS_TOKEN, META_TOKEN, vec2token
 from string_to_xml_to_vec import linked_to_recursive, xml2vec
 
 SHARD_RANGE_PATTERN = re.compile(r"\{(\d+)\.\.(\d+)\}")
+HF_DATASET_URL_PATTERN = re.compile(
+    r"https://huggingface\.co/datasets/(?P<repo_id>[^/]+/[^/]+)/resolve/(?P<revision>[^/]+)/(?P<filename>.+)"
+)
+
+
+def is_remote_wds_url(url: str) -> bool:
+    return url.startswith("http://") or url.startswith("https://")
+
+
+def _shard_filenames_in_url(url: str) -> List[str]:
+    match = SHARD_RANGE_PATTERN.search(url)
+    if match is None:
+        return [url.rsplit("/", 1)[-1]]
+    start, end = int(match.group(1)), int(match.group(2))
+    width = len(match.group(1))
+    basename = url.rsplit("/", 1)[-1]
+    brace = match.group(0)
+    before, after = basename.split(brace, 1)
+    return [f"{before}{i:0{width}d}{after}" for i in range(start, end + 1)]
+
+
+def _remote_shard_url(url: str, shard_filename: str) -> str:
+    return f"{url.rsplit('/', 1)[0]}/{shard_filename}"
+
+
+def _local_braceexpand_url(url: str, cache_dir: str) -> str:
+    basename = url.rsplit("/", 1)[-1]
+    match = SHARD_RANGE_PATTERN.search(basename)
+    if match is None:
+        return os.path.join(cache_dir, basename)
+    start, end = match.group(1), match.group(2)
+    before = basename[: match.start()]
+    after = basename[match.end() :]
+    return os.path.join(cache_dir, f"{before}{{{start}..{end}}}{after}")
+
+
+def _download_http_file(url: str, dest_path: str, retries: int = 5) -> None:
+    tmp_path = f"{dest_path}.partial"
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=120) as response:
+                with open(tmp_path, "wb") as out_file:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        out_file.write(chunk)
+            os.replace(tmp_path, dest_path)
+            return
+        except Exception as exc:
+            last_error = exc
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            print(f"Download attempt {attempt}/{retries} failed for {url}: {exc}")
+    raise OSError(f"Could not download {url}") from last_error
+
+
+def _download_hf_dataset_shard(
+    remote_url: str, cache_dir: str, filename: str
+) -> str:
+    match = HF_DATASET_URL_PATTERN.match(remote_url)
+    if match is None:
+        dest_path = os.path.join(cache_dir, filename)
+        _download_http_file(remote_url, dest_path)
+        return dest_path
+
+    from huggingface_hub import hf_hub_download
+
+    return hf_hub_download(
+        repo_id=match.group("repo_id"),
+        repo_type="dataset",
+        revision=match.group("revision"),
+        filename=filename,
+        local_dir=cache_dir,
+    )
+
+
+def cache_wds_url(url: str, cache_dir: str) -> str:
+    """Download remote shard(s) to cache_dir and return a local braceexpand URL."""
+    if not is_remote_wds_url(url):
+        return url
+
+    os.makedirs(cache_dir, exist_ok=True)
+    shard_names = _shard_filenames_in_url(url)
+    print(f"Caching {len(shard_names)} WebDataset shard(s) under {cache_dir}...")
+
+    for shard_name in shard_names:
+        dest_path = os.path.join(cache_dir, shard_name)
+        if os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
+            continue
+        remote_url = _remote_shard_url(url, shard_name)
+        print(f"  downloading {shard_name}")
+        _download_hf_dataset_shard(remote_url, cache_dir, shard_name)
+
+    local_url = _local_braceexpand_url(url, cache_dir)
+    print(f"Using local WebDataset URL: {local_url}")
+    return local_url
 
 
 def parse_shard_range(shard_range: str) -> Tuple[int, int]:

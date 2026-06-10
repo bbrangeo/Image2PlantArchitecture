@@ -25,7 +25,9 @@ from cowpea_wds_dataset import (
     CowpeaWDSCollectedDataset,
     CowpeaWDSIterableDataset,
     build_shard_url,
+    cache_wds_url,
     count_shards,
+    is_remote_wds_url,
     parse_shard_range,
 )
 from models.model import PlantArchitectureModel
@@ -184,6 +186,19 @@ if __name__ == "__main__":
     parser.add_argument("--total_samples", type=int, default=399899)
     parser.add_argument("--max_test_samples", type=int, default=500)
     parser.add_argument("--wds_workers", type=int, default=4)
+    parser.add_argument(
+        "--wds_cache_dir",
+        type=str,
+        default="data/cowpea_wds",
+        help="Cache remote WebDataset shards locally (default: data/cowpea_wds). "
+        "Set empty to stream over HTTP.",
+    )
+    parser.add_argument(
+        "--stream_wds",
+        type=str,
+        default="False",
+        help="Stream shards over HTTP instead of caching locally (not recommended on clusters)",
+    )
     parser.add_argument("--image_size", type=int, default=448, help="Size of input images")
     parser.add_argument("--encoder_checkpoint", type=str, default="facebook/dinov2-small")
     parser.add_argument("--decoder_checkpoint", type=str, default="gpt2-medium")
@@ -227,6 +242,7 @@ if __name__ == "__main__":
     args.debug = args.debug.lower() == "true"
     args.push_to_hub = args.push_to_hub.lower() == "true"
     args.use_mps = args.use_mps.lower() == "true"
+    args.stream_wds = args.stream_wds.lower() == "true"
 
     if args.curriculum:
         print("Warning: curriculum learning is not supported with WebDataset streaming and will be ignored.")
@@ -330,6 +346,21 @@ if __name__ == "__main__":
     train_url = build_shard_url(args.dataset_url, train_start, train_end)
     val_url = build_shard_url(args.dataset_url, val_start, val_end)
     test_url = build_shard_url(args.dataset_url, test_start, test_end)
+
+    if args.wds_cache_dir and not args.stream_wds:
+        for label, remote_url in (
+            ("train", train_url),
+            ("val", val_url),
+            ("test", test_url),
+        ):
+            if is_remote_wds_url(remote_url):
+                cached_url = cache_wds_url(remote_url, args.wds_cache_dir)
+                if label == "train":
+                    train_url = cached_url
+                elif label == "val":
+                    val_url = cached_url
+                else:
+                    test_url = cached_url
 
     print("Loading WebDataset...")
     print(f"  Train shards: {args.train_shards} -> {train_url}")
