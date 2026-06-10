@@ -33,6 +33,36 @@ from plant_tokenizer import EOS_TOKEN, PAD_TOKEN, SOS_TOKEN, VOCAB_SIZE
 from utils import model_summary
 
 
+def _as_logits_tensor(output):
+    """Keep only the [batch, seq, vocab] tensor from model outputs."""
+    if output is None:
+        return None
+    if torch.is_tensor(output):
+        return output
+    if hasattr(output, "logits"):
+        return output.logits
+    if isinstance(output, (tuple, list)):
+        for item in output:
+            if torch.is_tensor(item) and item.ndim == 3:
+                return item
+        if output:
+            return _as_logits_tensor(output[0])
+    return output
+
+
+class PlantArchitectureTrainer(Trainer):
+    """Strip KV-cache objects before accelerate pads eval predictions."""
+
+    def prediction_step(self, model, inputs, prediction_loss_only, ignore_keys=None):
+        loss, logits, labels = super().prediction_step(
+            model, inputs, prediction_loss_only=False, ignore_keys=ignore_keys
+        )
+        logits = _as_logits_tensor(logits)
+        if prediction_loss_only:
+            return (loss, None, None)
+        return (loss, logits, labels)
+
+
 def custom_data_collator(features):
     pixel_values = torch.stack([f["pixel_values"] for f in features])
 
@@ -94,9 +124,7 @@ def compute_metrics_for_training(eval_pred):
 
 
 def preprocess_logits_for_metrics(logits, labels):
-    if isinstance(logits, tuple):
-        logits = logits[0]
-
+    logits = _as_logits_tensor(logits)
     predictions = torch.argmax(logits, dim=-1)
 
     if predictions.shape[1] < labels.shape[1]:
@@ -111,7 +139,7 @@ def preprocess_logits_for_metrics(logits, labels):
     elif predictions.shape[1] > labels.shape[1]:
         predictions = predictions[:, : labels.shape[1]]
 
-    return predictions, labels
+    return predictions
 
 
 def estimate_train_samples(total_samples: int, train_shards: str, total_shards: int) -> int:
@@ -235,6 +263,7 @@ if __name__ == "__main__":
     decoder_config.bos_token_id = SOS_TOKEN
     decoder_config.pad_token_id = PAD_TOKEN
     decoder_config.eos_token_id = EOS_TOKEN
+    decoder_config.use_cache = False
 
     encoder_checkpoint = args.encoder_checkpoint
     image_size = args.image_size
@@ -283,6 +312,8 @@ if __name__ == "__main__":
     model.config.bos_token_id = SOS_TOKEN
     model.config.pad_token_id = PAD_TOKEN
     model.config.eos_token_id = EOS_TOKEN
+    model.config.use_cache = False
+    model.decoder.config.use_cache = False
     model.decoder.resize_token_embeddings(VOCAB_SIZE)
 
     torch.manual_seed(42)
@@ -388,7 +419,7 @@ if __name__ == "__main__":
         training_kwargs["save_safetensors"] = True
     training_args = TrainingArguments(**training_kwargs)
 
-    trainer = Trainer(
+    trainer = PlantArchitectureTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
