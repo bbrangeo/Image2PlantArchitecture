@@ -21,9 +21,12 @@ from plant_tokenizer import EOS_TOKEN, META_TOKEN, vec2token
 from string_to_xml_to_vec import linked_to_recursive, xml2vec
 
 SHARD_RANGE_PATTERN = re.compile(r"\{(\d+)\.\.(\d+)\}")
-HF_DATASET_URL_PATTERN = re.compile(
-    r"https://huggingface\.co/datasets/(?P<repo_id>[^/]+/[^/]+)/resolve/(?P<revision>[^/]+)/(?P<filename>.+)"
+HF_DATASET_URL_PREFIX = re.compile(
+    r"https://huggingface\.co/datasets/(?P<repo_id>.+?)/resolve/(?P<revision>[^/]+)/"
 )
+# Public WDS repo currently ships 40 shards (shard-000000 .. shard-000039).
+HF_WDS_DEFAULT_MAX_SHARD = 39
+HF_WDS_DEFAULT_TOTAL_SAMPLES = 79_560  # ~1990 samples/shard × 40 shards
 
 
 def is_remote_wds_url(url: str) -> bool:
@@ -79,21 +82,29 @@ def _download_http_file(url: str, dest_path: str, retries: int = 5) -> None:
     raise OSError(f"Could not download {url}") from last_error
 
 
-def _download_hf_dataset_shard(
-    remote_url: str, cache_dir: str, filename: str
-) -> str:
-    match = HF_DATASET_URL_PATTERN.match(remote_url)
+def parse_hf_dataset_url(url: str) -> Optional[Tuple[str, str]]:
+    match = HF_DATASET_URL_PREFIX.match(url)
     if match is None:
-        dest_path = os.path.join(cache_dir, filename)
-        _download_http_file(remote_url, dest_path)
-        return dest_path
+        return None
+    return match.group("repo_id"), match.group("revision")
 
+
+def list_hf_dataset_shards(repo_id: str, revision: str = "main") -> List[str]:
+    from huggingface_hub import HfApi
+
+    files = HfApi().list_repo_files(repo_id, repo_type="dataset", revision=revision)
+    return sorted(f for f in files if f.startswith("shard-") and f.endswith(".tar"))
+
+
+def _download_hf_dataset_shard(
+    repo_id: str, revision: str, cache_dir: str, filename: str
+) -> str:
     from huggingface_hub import hf_hub_download
 
     return hf_hub_download(
-        repo_id=match.group("repo_id"),
+        repo_id=repo_id,
         repo_type="dataset",
-        revision=match.group("revision"),
+        revision=revision,
         filename=filename,
         local_dir=cache_dir,
     )
@@ -106,15 +117,41 @@ def cache_wds_url(url: str, cache_dir: str) -> str:
 
     os.makedirs(cache_dir, exist_ok=True)
     shard_names = _shard_filenames_in_url(url)
-    print(f"Caching {len(shard_names)} WebDataset shard(s) under {cache_dir}...")
+    hf_ref = parse_hf_dataset_url(url)
 
-    for shard_name in shard_names:
-        dest_path = os.path.join(cache_dir, shard_name)
-        if os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
-            continue
-        remote_url = _remote_shard_url(url, shard_name)
-        print(f"  downloading {shard_name}")
-        _download_hf_dataset_shard(remote_url, cache_dir, shard_name)
+    if hf_ref is not None:
+        repo_id, revision = hf_ref
+        available = set(list_hf_dataset_shards(repo_id, revision))
+        missing = [name for name in shard_names if name not in available]
+        if missing:
+            avail_nums = sorted(
+                int(name.replace("shard-", "").replace(".tar", "")) for name in available
+            )
+            raise FileNotFoundError(
+                f"{len(missing)} shard(s) not in Hugging Face dataset {repo_id} "
+                f"(e.g. {missing[0]}). Available shard indices: "
+                f"{avail_nums[0]}..{avail_nums[-1]} ({len(available)} shards). "
+                "Update --dataset_url brace range and --train_shards/--val_shards/--test_shards."
+            )
+        print(
+            f"Caching {len(shard_names)} WebDataset shard(s) from {repo_id} "
+            f"under {cache_dir}..."
+        )
+        for shard_name in shard_names:
+            dest_path = os.path.join(cache_dir, shard_name)
+            if os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
+                continue
+            print(f"  downloading {shard_name}")
+            _download_hf_dataset_shard(repo_id, revision, cache_dir, shard_name)
+    else:
+        print(f"Caching {len(shard_names)} WebDataset shard(s) under {cache_dir}...")
+        for shard_name in shard_names:
+            dest_path = os.path.join(cache_dir, shard_name)
+            if os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
+                continue
+            remote_url = _remote_shard_url(url, shard_name)
+            print(f"  downloading {shard_name}")
+            _download_http_file(remote_url, dest_path)
 
     local_url = _local_braceexpand_url(url, cache_dir)
     print(f"Using local WebDataset URL: {local_url}")

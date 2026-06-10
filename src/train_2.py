@@ -178,12 +178,12 @@ if __name__ == "__main__":
         "--dataset_url",
         type=str,
         required=True,
-        help="WebDataset URL with braceexpand, e.g. .../shard-{000000..000200}.tar",
+        help="WebDataset URL with braceexpand, e.g. .../shard-{000000..000039}.tar",
     )
-    parser.add_argument("--train_shards", type=str, default="0-160")
-    parser.add_argument("--val_shards", type=str, default="161-180")
-    parser.add_argument("--test_shards", type=str, default="181-200")
-    parser.add_argument("--total_samples", type=int, default=399899)
+    parser.add_argument("--train_shards", type=str, default="0-31")
+    parser.add_argument("--val_shards", type=str, default="32-35")
+    parser.add_argument("--test_shards", type=str, default="36-39")
+    parser.add_argument("--total_samples", type=int, default=79560)
     parser.add_argument("--max_test_samples", type=int, default=500)
     parser.add_argument("--wds_workers", type=int, default=4)
     parser.add_argument(

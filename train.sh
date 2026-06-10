@@ -1,7 +1,7 @@
 #!/bin/bash
 
 python src/train_2.py \
-    --dataset_url "https://huggingface.co/datasets/heesup/Cowpea-Architecture-XML-WDS/resolve/main/shard-{000000..000200}.tar" \
+    --dataset_url "https://huggingface.co/datasets/heesup/Cowpea-Architecture-XML-WDS/resolve/main/shard-{000000..000039}.tar" \
     --encoder_checkpoint facebook/dinov2-small \
     --decoder_checkpoint gpt2-medium \
     --image_size 448 \

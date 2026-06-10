@@ -104,11 +104,13 @@ python src/train_2.py \
     --debug True
 ```
 
-**Full training** (default shard splits: `0-160` train, `161-180` val, `181-200` test):
+**Full training** (HF repo has **40 shards** `000000..000039`; default split `0-31` train, `32-35` val, `36-39` test):
 
 ```bash
+sh train.sh
+# or:
 python src/train_2.py \
-    --dataset_url "https://huggingface.co/datasets/heesup/Cowpea-Architecture-XML-WDS/resolve/main/shard-{000000..000200}.tar" \
+    --dataset_url "https://huggingface.co/datasets/heesup/Cowpea-Architecture-XML-WDS/resolve/main/shard-{000000..000039}.tar" \
     --encoder_checkpoint facebook/dinov2-small \
     --decoder_checkpoint gpt2-medium \
     --image_size 448 \
@@ -125,7 +127,7 @@ For a full dataset copy up front:
 ```bash
 huggingface-cli download heesup/Cowpea-Architecture-XML-WDS \
   --repo-type dataset --local-dir ./data/cowpea_wds
-# then: --dataset_url "./data/cowpea_wds/shard-{000000..000200}.tar"
+# then: --dataset_url "./data/cowpea_wds/shard-{000000..000039}.tar"
 ```
 
 ## Troubleshooting
@@ -138,6 +140,7 @@ huggingface-cli download heesup/Cowpea-Architecture-XML-WDS \
 | `torch.load` / CVE-2025-32434 on resume | Requires `torch>=2.6`; or delete `optimizer.pt` / `scheduler.pt` in the checkpoint folder. |
 | `EncoderDecoderCache` error at eval | Update to latest `main` (`PlantArchitectureTrainer` fix). |
 | WebDataset `curl` exit 56 | Default `--wds_cache_dir data/cowpea_wds` caches shards before training. Or pre-download manually (see above). |
+| HF shard `404` / wrong repo redirect | Public WDS has shards `000000..000039` only. Use `shard-{000000..000039}.tar`, not `..000200`. |
 | Inference: `Depth & Organ is not defined` / empty XML | Checkpoint too early (smoke test) or wrong image layout. Use `heesup/dinov2-small_448_Sideview_gpt2-medium` or a trained `.../results` checkpoint. |
 
 ### Inference
