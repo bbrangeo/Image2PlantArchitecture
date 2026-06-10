@@ -44,11 +44,14 @@ If you use this code or dataset in your research, please cite:
 ## Installation
 
 ### 1. Python Environment
-Create and activate the conda environment:
+Create and activate the conda environment (Python 3.10, torch via pip):
 ```bash
-conda env create -f environment_cuda.yml -p .env
-conda activate .env
+micromamba env create -f environment_cuda.yml -n .env
+micromamba activate .env
+python -c "import torch, torchvision; print(torch.__version__, torchvision.__version__, torch.cuda.is_available())"
 ```
+
+On hosts that need a specific CUDA wheel (e.g. `cu128`), reinstall torch after create — see comments in `environment_cuda.yml`.
 
 ### 2. Build the Helios Simulator
 The simulator is required for re-rendering generated XML files into 3D models:
@@ -84,10 +87,11 @@ python -c "import torch, torchvision; print(torch.__version__, torchvision.__ver
 
 See [pytorch.org previous versions](https://pytorch.org/get-started/previous-versions/) for other CUDA tags (`cu126`, `cu121`, `cpu`, …).
 
-**Fresh conda-only install** (no pip torch):
+**Recreate the environment**:
 
 ```bash
-micromamba env create -f environment_cuda.yml -p .env
+micromamba env remove -n .env -y
+micromamba env create -f environment_cuda.yml -n .env
 ```
 
 **Checkpoint resume fails with `torch.load` / CVE-2025-32434**

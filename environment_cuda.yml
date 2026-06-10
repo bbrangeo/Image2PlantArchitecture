@@ -1,19 +1,10 @@
 name: .env
 channels:
   - conda-forge
-  - pytorch
-  - nvidia
 dependencies:
-  - python=3.9
+  - python=3.10
   - pip
-  # Matched torch stack. If you later pip-upgrade torch (e.g. 2.8+cu128),
-  # reinstall torchvision/torchaudio with pip from download.pytorch.org/whl/.
-  - pytorch=2.6.0
-  - torchvision=0.21.0
-  - torchaudio=2.6.0
-  - pytorch-cuda=12.1
   - scikit-learn=1.3.2
-  - open-clip-torch=2.24.0
   - matplotlib
   - transformers
   - notebook
@@ -25,5 +16,14 @@ dependencies:
   - rouge-score
   - accelerate
   - safetensors
+  # Torch via pip only — avoids conda solver issues (torchaudio 2.6+ needs py>=3.10)
+  # and pip/conda mix that breaks imports. PyPI Linux wheels ship with CUDA.
+  # If needed, reinstall for your CUDA tag after env create, e.g. cu128:
+  #   pip install --force-reinstall torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 \
+  #     --index-url https://download.pytorch.org/whl/cu128
   - pip:
+    - torch==2.8.0
+    - torchvision==0.23.0
+    - torchaudio==2.8.0
+    - open-clip-torch==2.24.0
     - webdataset
